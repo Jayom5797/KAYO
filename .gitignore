@@ -1,0 +1,122 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.log
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+venv/
+env/
+ENV/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.next/
+out/
+build/
+dist/
+.cache/
+.vercel
+.turbo
+
+# Environment
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# IDE
+.kiro
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+override.tf
+override.tf.json
+
+# Kubernetes
+kubeconfig
+*.kubeconfig
+
+# Secrets
+secrets/
+*.pem
+*.key
+*.crt
+*.p12
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Backup
+*.bak
+*.backup
+*.old
+
+# Temporary
+tmp/
+temp/
+*.tmp
+
+# Coverage
+coverage/
+.nyc_output/
+*.lcov
+
+# Documentation (generated)
+docs/_build/
+site/
+
+# Local development
+docker-compose.override.yml
+.local/
