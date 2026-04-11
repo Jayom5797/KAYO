@@ -138,85 +138,74 @@ async def get_attack_path(
     db: Session = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant_id)
 ):
-    """
-    Reconstruct attack path for incident.
-    
-    Returns:
-        - root_cause: Initial access point entities
-        - attack_chain: Step-by-step attack progression
-        - timeline: Human-readable event timeline
-        - confidence_score: Path reconstruction confidence (0.0-1.0)
-        - affected_entities: All entities involved in attack
-    
-    Security: Automatically filtered by tenant_id
-    Time complexity: O(V + E) for graph traversal
-    """
+    """Reconstruct attack path for incident using Neo4j graph traversal."""
     from neo4j import GraphDatabase
     from models.tenant import Tenant
-    import sys
-    sys.path.append('../../../services/detection-engine')
-    from attack_path_reconstructor import AttackPathReconstructor
-    
-    # Get incident
+
     incident = (
         db.query(Incident)
-        .filter(
-            Incident.incident_id == incident_id,
-            Incident.tenant_id == tenant_id
-        )
+        .filter(Incident.incident_id == incident_id, Incident.tenant_id == tenant_id)
         .first()
     )
-    
     if not incident:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
-    
-    # Get tenant Neo4j database
+
     tenant = db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
     if not tenant:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
-    
-    neo4j_database = tenant.settings.get('neo4j_database')
+
+    neo4j_database = tenant.settings.get('neo4j_database') if tenant.settings else None
     if not neo4j_database:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Tenant graph database not provisioned"
-        )
-    
-    # Connect to Neo4j
-    from config import settings
-    driver = GraphDatabase.driver(
-        settings.neo4j_uri,
-        auth=(settings.neo4j_admin_user, settings.neo4j_admin_password)
-    )
-    
+        # Return graph snapshot from incident if Neo4j not provisioned
+        return {
+            "incident_id": str(incident_id),
+            "graph_snapshot": incident.graph_snapshot or {},
+            "attack_chain": [],
+            "confidence_score": 0.0,
+            "message": "Graph database not provisioned for this tenant"
+        }
+
     try:
-        # Reconstruct attack path
+        driver = GraphDatabase.driver(
+            settings.neo4j_uri,
+            auth=(settings.neo4j_user, settings.neo4j_password)
+        )
+        import sys, os
+        detection_engine_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), '../../../../services/detection-engine')
+        )
+        if detection_engine_path not in sys.path:
+            sys.path.insert(0, detection_engine_path)
+        from attack_path_reconstructor import AttackPathReconstructor
+
         reconstructor = AttackPathReconstructor(driver, neo4j_database)
-        
         incident_data = {
             'incident_id': str(incident.incident_id),
             'graph_snapshot': incident.graph_snapshot or {}
         }
-        
         attack_path = reconstructor.reconstruct_attack_path(incident_data, max_depth=10)
-        
-        logger.info(
-            f"Reconstructed attack path for incident {incident_id}: "
-            f"{len(attack_path['attack_chain'])} steps, "
-            f"confidence: {attack_path['confidence_score']}"
-        )
-        
+        logger.info(f"Reconstructed attack path for incident {incident_id}")
         return attack_path
-    
+
+    except ImportError:
+        logger.warning("AttackPathReconstructor not available, returning graph snapshot")
+        return {
+            "incident_id": str(incident_id),
+            "graph_snapshot": incident.graph_snapshot or {},
+            "attack_chain": [],
+            "confidence_score": 0.0,
+        }
     except Exception as e:
         logger.error(f"Failed to reconstruct attack path: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to reconstruct attack path: {str(e)}"
         )
-    
     finally:
-        driver.close()
+        try:
+            driver.close()
+        except Exception:
+            pass
 
 
 @router.post("/{incident_id}/explain")
@@ -226,71 +215,62 @@ async def generate_explanation(
     db: Session = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant_id)
 ):
-    """
-    Generate AI-powered explanation for incident.
-    
-    Returns:
-        - technical_summary: Detailed technical analysis
-        - executive_summary: Non-technical business impact summary
-        - attack_narrative: Chronological story of the attack
-        - remediation: Actionable remediation steps
-        - confidence_score: Explanation confidence (0.0-1.0)
-    
-    Security: Automatically filtered by tenant_id, rate limited
-    Time complexity: O(1) cache hit, O(n) cache miss (LLM generation)
-    """
-    import sys
-    sys.path.append('../../../services/ai-explainer')
-    from explanation_service import ExplanationService
-    
-    # Verify incident exists and belongs to tenant
+    """Generate AI-powered explanation for incident."""
     incident = (
         db.query(Incident)
-        .filter(
-            Incident.incident_id == incident_id,
-            Incident.tenant_id == tenant_id
-        )
+        .filter(Incident.incident_id == incident_id, Incident.tenant_id == tenant_id)
         .first()
     )
-    
     if not incident:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
-    
-    # Initialize explanation service
-    service = ExplanationService()
-    
+
+    # If AI summary already exists and not forcing regeneration, return cached
+    if incident.ai_summary and not force_regenerate:
+        return {
+            "incident_id": str(incident_id),
+            "technical_summary": incident.ai_summary,
+            "cached": True
+        }
+
     try:
+        import sys, os
+        ai_explainer_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), '../../../../services/ai-explainer')
+        )
+        if ai_explainer_path not in sys.path:
+            sys.path.insert(0, ai_explainer_path)
+        from explanation_service import ExplanationService
+
+        service = ExplanationService()
         await service.initialize()
-        
-        # Check rate limits
+
         within_limits = await service.check_rate_limit(str(tenant_id))
         if not within_limits:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Daily token limit exceeded. Please try again tomorrow."
             )
-        
-        # Generate explanation
+
         explanation = await service.generate_incident_explanation(
-            str(incident_id),
-            str(tenant_id),
-            force_regenerate=force_regenerate
+            str(incident_id), str(tenant_id), force_regenerate=force_regenerate
         )
-        
-        # Update incident with AI summary
         incident.ai_summary = explanation.get('technical_summary')
         db.commit()
-        
         logger.info(f"Generated AI explanation for incident {incident_id}")
-        
         return explanation
-    
+
+    except ImportError:
+        logger.warning("ExplanationService not available")
+        return {
+            "incident_id": str(incident_id),
+            "technical_summary": "AI explanation service not available in this environment.",
+            "cached": False
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to generate explanation: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate explanation: {str(e)}"
         )
-    
-    finally:
-        await service.cleanup()

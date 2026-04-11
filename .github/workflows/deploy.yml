@@ -2,99 +2,125 @@ name: Deploy
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
     tags:
-      - 'v*'
+      - "v*"
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_PREFIX: ${{ github.repository }}
+  AWS_REGION: us-east-1
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     strategy:
       matrix:
-        service:
-          - control-plane
-          - graph-engine
-          - detection-engine
-          - deployment-orchestrator
-          - ai-explainer
-    
+        service: [control-plane, detection-engine, ai-explainer]
+
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Log in to Container Registry
-      uses: docker/login-action@v2
-      with:
-        registry: ${{ env.REGISTRY }}
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Extract metadata
-      id: meta
-      uses: docker/metadata-action@v4
-      with:
-        images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
-        tags: |
-          type=ref,event=branch
-          type=ref,event=pr
-          type=semver,pattern={{version}}
-          type=semver,pattern={{major}}.{{minor}}
-          type=sha
-    
-    - name: Build and push
-      uses: docker/build-push-action@v4
-      with:
-        context: ./services/${{ matrix.service }}
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag
+        id: tag
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=sha-${{ github.sha }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/${{ matrix.service }}
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/kayo/${{ matrix.service }}:${{ steps.tag.outputs.tag }}
+            ${{ steps.login-ecr.outputs.registry }}/kayo/${{ matrix.service }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   deploy-staging:
     needs: build-and-push
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
-    
+    environment: staging
+
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Configure kubectl
-      uses: azure/k8s-set-context@v3
-      with:
-        method: kubeconfig
-        kubeconfig: ${{ secrets.KUBE_CONFIG_STAGING }}
-    
-    - name: Deploy to staging
-      run: |
-        kubectl apply -f infrastructure/kubernetes/base/
-        kubectl set image deployment/control-plane \
-          control-plane=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/control-plane:${{ github.sha }}
-        kubectl rollout status deployment/control-plane
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name kayo-staging --region ${{ env.AWS_REGION }}
+
+      - name: Deploy to staging
+        env:
+          IMAGE_TAG: sha-${{ github.sha }}
+          REGISTRY: ${{ secrets.ECR_REGISTRY }}
+        run: |
+          kubectl apply -f infrastructure/kubernetes/base/namespace.yaml
+          kubectl apply -f infrastructure/kubernetes/base/secrets.yaml
+          # Update image tags
+          sed -i "s|REGISTRY/kayo/control-plane:VERSION|${REGISTRY}/kayo/control-plane:${IMAGE_TAG}|g" infrastructure/kubernetes/base/control-plane.yaml
+          sed -i "s|REGISTRY/kayo/detection-engine:VERSION|${REGISTRY}/kayo/detection-engine:${IMAGE_TAG}|g" infrastructure/kubernetes/base/detection-engine.yaml
+          sed -i "s|REGISTRY/kayo/ai-explainer:VERSION|${REGISTRY}/kayo/ai-explainer:${IMAGE_TAG}|g" infrastructure/kubernetes/base/ai-explainer.yaml
+          kubectl apply -f infrastructure/kubernetes/base/control-plane.yaml
+          kubectl apply -f infrastructure/kubernetes/base/detection-engine.yaml
+          kubectl apply -f infrastructure/kubernetes/base/ai-explainer.yaml
+          kubectl rollout status deployment/control-plane -n kayo --timeout=300s
+          kubectl rollout status deployment/detection-engine -n kayo --timeout=300s
 
   deploy-production:
     needs: build-and-push
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     environment: production
-    
+
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Configure kubectl
-      uses: azure/k8s-set-context@v3
-      with:
-        method: kubeconfig
-        kubeconfig: ${{ secrets.KUBE_CONFIG_PRODUCTION }}
-    
-    - name: Deploy to production
-      run: |
-        kubectl apply -f infrastructure/kubernetes/base/
-        kubectl set image deployment/control-plane \
-          control-plane=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/control-plane:${{ github.ref_name }}
-        kubectl rollout status deployment/control-plane
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name kayo-production --region ${{ env.AWS_REGION }}
+
+      - name: Deploy to production
+        env:
+          IMAGE_TAG: ${{ github.ref_name }}
+          REGISTRY: ${{ secrets.ECR_REGISTRY }}
+        run: |
+          kubectl apply -f infrastructure/kubernetes/base/namespace.yaml
+          sed -i "s|REGISTRY/kayo/control-plane:VERSION|${REGISTRY}/kayo/control-plane:${IMAGE_TAG}|g" infrastructure/kubernetes/base/control-plane.yaml
+          sed -i "s|REGISTRY/kayo/detection-engine:VERSION|${REGISTRY}/kayo/detection-engine:${IMAGE_TAG}|g" infrastructure/kubernetes/base/detection-engine.yaml
+          sed -i "s|REGISTRY/kayo/ai-explainer:VERSION|${REGISTRY}/kayo/ai-explainer:${IMAGE_TAG}|g" infrastructure/kubernetes/base/ai-explainer.yaml
+          kubectl apply -f infrastructure/kubernetes/base/control-plane.yaml
+          kubectl apply -f infrastructure/kubernetes/base/detection-engine.yaml
+          kubectl apply -f infrastructure/kubernetes/base/ai-explainer.yaml
+          kubectl rollout status deployment/control-plane -n kayo --timeout=300s
+
+      - name: Notify deployment
+        if: always()
+        run: |
+          echo "Production deployment of ${{ github.ref_name }} completed with status: ${{ job.status }}"

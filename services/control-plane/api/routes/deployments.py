@@ -38,14 +38,12 @@ async def create_deployment(
     tenant = db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
     if not tenant:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
-    
-    k8s_namespace = tenant.settings.get("k8s_namespace")
+
+    k8s_namespace = tenant.settings.get("k8s_namespace") if tenant.settings else None
+    # Use a default namespace if not provisioned (local dev)
     if not k8s_namespace:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Tenant namespace not provisioned"
-        )
-    
+        k8s_namespace = f"tenant-{str(tenant_id)[:8]}"
+
     # Create deployment record
     deployment = Deployment(
         tenant_id=tenant_id,
@@ -167,7 +165,7 @@ async def update_deployment(
         
         deployment_data = {
             'name': deployment.app_name,
-            'image': deployment.image_tag or 'building',
+            'image': deployment.image_name or 'building',
             'updated_at': deployment.updated_at.isoformat() if deployment.updated_at else None
         }
         
@@ -209,3 +207,78 @@ async def delete_deployment(
     db.commit()
     
     logger.info(f"Deleted deployment: {deployment_id}")
+
+
+@router.post("/{deployment_id}/blue-green/promote", response_model=DeploymentResponse)
+async def promote_blue_green(
+    deployment_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    tenant_id: uuid.UUID = Depends(get_current_tenant_id)
+):
+    """
+    Promote blue-green deployment — switch traffic from current (blue) to new (green) slot.
+    Sets deployment strategy to blue-green and marks green as active.
+    """
+    deployment = db.query(Deployment).filter(
+        Deployment.deployment_id == deployment_id,
+        Deployment.tenant_id == tenant_id
+    ).first()
+
+    if not deployment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
+
+    if deployment.status not in ["running", "pending"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot promote deployment in status: {deployment.status}"
+        )
+
+    # Record blue-green promotion in build_logs
+    logs = deployment.build_logs or []
+    logs.append({
+        "timestamp": __import__("datetime").datetime.utcnow().isoformat(),
+        "message": f"Blue-green promotion initiated by {current_user.email}",
+        "level": "info"
+    })
+    deployment.build_logs = logs
+    deployment.status = "promoting"
+    db.commit()
+    db.refresh(deployment)
+
+    logger.info(f"Blue-green promotion started for deployment {deployment_id} by {current_user.email}")
+    return deployment
+
+
+@router.post("/{deployment_id}/rollback", response_model=DeploymentResponse)
+async def rollback_deployment(
+    deployment_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    tenant_id: uuid.UUID = Depends(get_current_tenant_id)
+):
+    """
+    Rollback deployment to previous version.
+    Sets status to rolling_back and records the action in build logs.
+    """
+    deployment = db.query(Deployment).filter(
+        Deployment.deployment_id == deployment_id,
+        Deployment.tenant_id == tenant_id
+    ).first()
+
+    if not deployment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
+
+    logs = deployment.build_logs or []
+    logs.append({
+        "timestamp": __import__("datetime").datetime.utcnow().isoformat(),
+        "message": f"Rollback initiated by {current_user.email}",
+        "level": "warning"
+    })
+    deployment.build_logs = logs
+    deployment.status = "rolling_back"
+    db.commit()
+    db.refresh(deployment)
+
+    logger.info(f"Rollback initiated for deployment {deployment_id} by {current_user.email}")
+    return deployment

@@ -12,6 +12,8 @@ class Incident(Base):
     
     incident_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey('tenants.tenant_id', ondelete='CASCADE'), nullable=False, index=True)
+    title = Column(String(255), nullable=True)
+    description = Column(Text, nullable=True)
     severity = Column(String(20), nullable=False, index=True)
     status = Column(String(20), nullable=False, default='new', index=True)
     attack_pattern = Column(String(100), nullable=True)
@@ -21,6 +23,7 @@ class Incident(Base):
     graph_snapshot = Column(JSON, default={})
     ai_summary = Column(Text, nullable=True)
     remediation_steps = Column(JSON, default=[])
+    notes = Column(JSON, default=[])
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     resolved_at = Column(DateTime(timezone=True), nullable=True)

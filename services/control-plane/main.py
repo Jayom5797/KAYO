@@ -6,7 +6,7 @@ import time
 
 from config import settings
 from database import engine, Base, SessionLocal
-from api.routes import tenants_router, auth_router, deployments_router, incidents_router, invitations_router, webhooks_router
+from api.routes import tenants_router, auth_router, deployments_router, incidents_router, invitations_router, webhooks_router, audit_logs_router, compliance_router
 from api.middleware.rate_limiter import RateLimitMiddleware
 from api.middleware.audit_logger import AuditLogMiddleware
 
@@ -24,7 +24,8 @@ app = FastAPI(
     debug=settings.debug,
     docs_url="/api/docs",
     redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json"
+    openapi_url="/api/openapi.json",
+    redirect_slashes=False
 )
 
 # CORS middleware
@@ -96,17 +97,80 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.get("/health")
 async def health_check():
     """
-    Health check endpoint for load balancers and monitoring.
-    
-    Returns:
-        Status and version information
-    
-    Time complexity: O(1)
+    Extended health check — checks all service dependencies.
+    Returns status of API, PostgreSQL, Redis, Kafka, Neo4j, ClickHouse.
     """
+    import time as _time
+    from sqlalchemy import text
+
+    checks = {}
+    overall = "healthy"
+
+    # PostgreSQL
+    try:
+        start = _time.time()
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        checks["postgresql"] = {"status": "up", "response_ms": round((_time.time() - start) * 1000)}
+    except Exception as e:
+        checks["postgresql"] = {"status": "down", "error": str(e)}
+        overall = "degraded"
+
+    # Redis
+    try:
+        import redis as redis_lib
+        start = _time.time()
+        r = redis_lib.from_url(settings.redis_url, socket_connect_timeout=2)
+        r.ping()
+        checks["redis"] = {"status": "up", "response_ms": round((_time.time() - start) * 1000)}
+    except Exception as e:
+        checks["redis"] = {"status": "down", "error": str(e)}
+        overall = "degraded"
+
+    # Kafka
+    try:
+        import socket
+        start = _time.time()
+        host, port = settings.kafka_bootstrap_servers.split(",")[0].split(":")
+        sock = socket.create_connection((host, int(port)), timeout=2)
+        sock.close()
+        checks["kafka"] = {"status": "up", "response_ms": round((_time.time() - start) * 1000)}
+    except Exception as e:
+        checks["kafka"] = {"status": "down", "error": str(e)}
+        overall = "degraded"
+
+    # Neo4j
+    try:
+        from neo4j import GraphDatabase
+        start = _time.time()
+        driver = GraphDatabase.driver(
+            settings.neo4j_uri,
+            auth=(settings.neo4j_user, settings.neo4j_password),
+            connection_timeout=2
+        )
+        driver.verify_connectivity()
+        driver.close()
+        checks["neo4j"] = {"status": "up", "response_ms": round((_time.time() - start) * 1000)}
+    except Exception as e:
+        checks["neo4j"] = {"status": "down", "error": str(e)}
+        overall = "degraded"
+
+    # ClickHouse
+    try:
+        import socket
+        start = _time.time()
+        sock = socket.create_connection((settings.clickhouse_host, settings.clickhouse_port), timeout=2)
+        sock.close()
+        checks["clickhouse"] = {"status": "up", "response_ms": round((_time.time() - start) * 1000)}
+    except Exception as e:
+        checks["clickhouse"] = {"status": "down", "error": str(e)}
+        overall = "degraded"
+
     return {
-        "status": "healthy",
+        "status": overall,
         "version": settings.app_version,
-        "service": "control-plane"
+        "service": "control-plane",
+        "dependencies": checks,
     }
 
 
@@ -117,6 +181,8 @@ app.include_router(deployments_router)
 app.include_router(incidents_router)
 app.include_router(invitations_router)
 app.include_router(webhooks_router)
+app.include_router(audit_logs_router)
+app.include_router(compliance_router)
 
 
 # Startup event

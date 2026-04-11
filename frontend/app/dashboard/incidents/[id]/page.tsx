@@ -101,14 +101,16 @@ export default function IncidentDetailPage() {
                 {incident.status}
               </span>
             </div>
-            <h1 className="text-2xl font-bold text-gray-900">{incident.title}</h1>
+            <h1 className="text-2xl font-bold text-gray-900">
+              {incident.title || incident.attack_pattern || `Incident ${incident.incident_id.toString().slice(0, 8)}`}
+            </h1>
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-4 mb-6 text-sm">
           <div>
             <span className="text-gray-500">Detected:</span>
-            <span className="ml-2 text-gray-900">{formatDate(incident.detected_at)}</span>
+            <span className="ml-2 text-gray-900">{formatDate(incident.created_at)}</span>
           </div>
           {incident.resolved_at && (
             <div>
@@ -123,50 +125,19 @@ export default function IncidentDetailPage() {
           <p className="text-gray-700">{incident.description}</p>
         </div>
 
-        {incident.mitre_tactics && incident.mitre_tactics.length > 0 && (
+        {incident.mitre_technique && (
           <div className="mb-6">
-            <h2 className="text-sm font-semibold text-gray-900 mb-2">MITRE ATT&CK Tactics</h2>
-            <div className="flex flex-wrap gap-2">
-              {incident.mitre_tactics.map((tactic: string) => (
-                <span
-                  key={tactic}
-                  className="inline-flex items-center px-3 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200"
-                >
-                  {tactic}
-                </span>
-              ))}
-            </div>
+            <h2 className="text-sm font-semibold text-gray-900 mb-2">MITRE ATT&CK Technique</h2>
+            <span className="inline-flex items-center px-3 py-1 rounded-md text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
+              {incident.mitre_technique}
+            </span>
           </div>
         )}
 
-        {incident.mitre_techniques && incident.mitre_techniques.length > 0 && (
+        {incident.attack_pattern && (
           <div className="mb-6">
-            <h2 className="text-sm font-semibold text-gray-900 mb-2">MITRE ATT&CK Techniques</h2>
-            <div className="flex flex-wrap gap-2">
-              {incident.mitre_techniques.map((technique: string) => (
-                <span
-                  key={technique}
-                  className="inline-flex items-center px-3 py-1 rounded-md text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200"
-                >
-                  {technique}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {incident.affected_entities && incident.affected_entities.length > 0 && (
-          <div className="mb-6">
-            <h2 className="text-sm font-semibold text-gray-900 mb-2">Affected Entities</h2>
-            <div className="bg-gray-50 rounded-md p-4">
-              <ul className="space-y-2">
-                {incident.affected_entities.map((entity: any, idx: number) => (
-                  <li key={idx} className="text-sm text-gray-700">
-                    <span className="font-medium">{entity.type}:</span> {entity.id}
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <h2 className="text-sm font-semibold text-gray-900 mb-2">Attack Pattern</h2>
+            <p className="text-sm text-gray-700">{incident.attack_pattern}</p>
           </div>
         )}
       </div>

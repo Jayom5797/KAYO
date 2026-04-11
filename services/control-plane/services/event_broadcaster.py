@@ -310,3 +310,44 @@ class EventBroadcaster:
                 )
         except Exception as e:
             logger.error(f"Failed to create broadcast task: {e}")
+
+    def broadcast_incident_updated_sync(
+        self,
+        tenant_id: uuid.UUID,
+        incident_id: uuid.UUID,
+        incident_data: Dict[str, Any],
+        changes: Dict[str, Any]
+    ):
+        """Synchronous wrapper for incident.updated broadcast."""
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(
+                    self.broadcast_incident_updated(tenant_id, incident_id, incident_data, changes)
+                )
+            else:
+                asyncio.run(
+                    self.broadcast_incident_updated(tenant_id, incident_id, incident_data, changes)
+                )
+        except Exception as e:
+            logger.error(f"Failed to create broadcast task: {e}")
+
+    def broadcast_incident_resolved_sync(
+        self,
+        tenant_id: uuid.UUID,
+        incident_id: uuid.UUID,
+        incident_data: Dict[str, Any]
+    ):
+        """Synchronous wrapper for incident.resolved broadcast."""
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(
+                    self.broadcast_incident_resolved(tenant_id, incident_id, incident_data)
+                )
+            else:
+                asyncio.run(
+                    self.broadcast_incident_resolved(tenant_id, incident_id, incident_data)
+                )
+        except Exception as e:
+            logger.error(f"Failed to create broadcast task: {e}")

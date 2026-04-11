@@ -154,3 +154,56 @@ async def logout(
     """
     logger.info(f"User logged out: {current_user.user_id}")
     return {"message": "Successfully logged out"}
+
+
+@router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def signup(
+    user_data: UserCreate,
+    db: Session = Depends(get_db)
+):
+    """
+    Self-service signup — creates a new tenant and admin user in one step.
+    No invitation token required.
+    """
+    from models.tenant import Tenant
+    import re
+
+    # Check email not already taken
+    existing = db.query(User).filter(User.email == user_data.email).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered"
+        )
+
+    # Derive tenant slug from email domain
+    domain = user_data.email.split("@")[-1].split(".")[0]
+    slug = re.sub(r"[^a-z0-9-]", "-", domain.lower())[:50]
+    # Ensure slug uniqueness
+    base_slug = slug
+    counter = 1
+    while db.query(Tenant).filter(Tenant.slug == slug).first():
+        slug = f"{base_slug}-{counter}"
+        counter += 1
+
+    tenant = Tenant(
+        name=f"{domain.capitalize()} Org",
+        slug=slug,
+        tier="free",
+        settings={}
+    )
+    db.add(tenant)
+    db.flush()
+
+    user = User(
+        tenant_id=tenant.tenant_id,
+        email=user_data.email,
+        password_hash=get_password_hash(user_data.password),
+        role="admin"
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    logger.info(f"Signup: created tenant {tenant.tenant_id} and user {user.user_id}")
+    return user

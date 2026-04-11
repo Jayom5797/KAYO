@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     debug: bool = True
     
     # Database
-    database_url: str = "postgresql://kayo:kayo_dev_password@localhost:5432/kayo_control_plane"
+    database_url: str = "postgresql://kayo:kayo_dev_password@127.0.0.1:5433/kayo_control_plane"
     
     # Redis
     redis_url: str = "redis://localhost:6379/0"
@@ -40,12 +40,12 @@ class Settings(BaseSettings):
     k8s_in_cluster: bool = False
     k8s_namespace_prefix: str = "tenant-"
     
-    # Email (SMTP)
-    smtp_host: str = "smtp.sendgrid.net"
+    # Email (SMTP - Gmail)
+    smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
-    smtp_user: str = "apikey"
+    smtp_user: str = ""
     smtp_password: str = ""
-    from_email: str = "noreply@kayo.io"
+    from_email: str = ""
     
     # Container Registry
     registry_url: str = "registry.kayo.internal"
