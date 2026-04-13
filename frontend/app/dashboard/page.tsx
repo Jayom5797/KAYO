@@ -1,8 +1,10 @@
 'use client'
 
 import { useQuery } from '@tanstack/react-query'
+import { useState, useRef } from 'react'
 import { apiClient } from '@/lib/api-client'
 import { formatRelativeTime, getSeverityColor, getStatusColor } from '@/lib/utils'
+import { analyzeZip, type AnalysisResult } from '@/lib/project-analyzer'
 import Link from 'next/link'
 
 function StatCard({ label, value, sub, color }: { label: string; value: string | number; sub?: string; color?: string }) {
@@ -38,6 +40,32 @@ export default function DashboardPage() {
   const criticalCount = incidents?.filter((i: any) => i.severity === 'critical').length ?? 0
   const openCount     = incidents?.filter((i: any) => i.status === 'new').length ?? 0
   const runningDeps   = deployments?.filter((d: any) => d.status === 'running').length ?? 0
+
+  // Project analyzer state
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null)
+  const [showAnalysis, setShowAnalysis] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleZipUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.name.endsWith('.zip')) { setAnalyzeError('Please upload a .zip file'); return }
+    setAnalyzing(true)
+    setAnalyzeError(null)
+    setAnalysis(null)
+    try {
+      const result = await analyzeZip(file)
+      setAnalysis(result)
+      setShowAnalysis(true)
+    } catch (err: any) {
+      setAnalyzeError(err.message || 'Failed to analyze ZIP')
+    } finally {
+      setAnalyzing(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
 
   return (
     <div className="space-y-8">
@@ -158,6 +186,223 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Project Analyzer */}
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden animate-fade-in">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900">Project Analyzer</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Upload your project ZIP to analyze code quality, security, endpoints, and services</p>
+          </div>
+          <div className="flex items-center gap-3">
+            {analysis && (
+              <button onClick={() => setShowAnalysis(!showAnalysis)} className="text-xs text-gray-500 border border-gray-200 rounded px-3 py-1.5 hover:bg-gray-50">
+                {showAnalysis ? 'Hide Report' : 'Show Report'}
+              </button>
+            )}
+            <input ref={fileInputRef} type="file" accept=".zip" onChange={handleZipUpload} className="hidden" id="zip-upload" />
+            <label htmlFor="zip-upload" className={`cursor-pointer px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors ${analyzing ? 'bg-gray-400 cursor-not-allowed' : 'bg-black hover:bg-gray-800'}`}>
+              {analyzing ? 'Analyzing...' : analysis ? 'Re-analyze ZIP' : 'Upload ZIP'}
+            </label>
+          </div>
+        </div>
+
+        {analyzeError && (
+          <div className="px-6 py-3 bg-red-50 border-b border-red-100 text-sm text-red-600">{analyzeError}</div>
+        )}
+
+        {analyzing && (
+          <div className="px-6 py-12 text-center">
+            <div className="w-8 h-8 border-2 border-gray-900 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+            <p className="text-sm text-gray-500">Analyzing project structure...</p>
+          </div>
+        )}
+
+        {analysis && showAnalysis && (
+          <div className="p-6 space-y-6">
+
+            {/* Frameworks + Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Frameworks & Stack</p>
+                <div className="flex flex-wrap gap-2">
+                  {analysis.frameworks.map((f, i) => (
+                    <span key={i} className={`px-3 py-1 rounded-full text-xs font-medium border ${
+                      f.type === 'frontend' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                      f.type === 'backend'  ? 'bg-green-50 text-green-700 border-green-200' :
+                      'bg-gray-50 text-gray-700 border-gray-200'
+                    }`}>
+                      {f.name}{f.version ? ` ${f.version}` : ''}
+                    </span>
+                  ))}
+                  {analysis.frameworks.length === 0 && <span className="text-xs text-gray-400">No frameworks detected</span>}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Code Stats</p>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-gray-50 rounded-lg p-3 text-center">
+                    <div className="text-lg font-bold text-gray-900">{analysis.stats.totalFiles}</div>
+                    <div className="text-xs text-gray-500">Files</div>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3 text-center">
+                    <div className="text-lg font-bold text-gray-900">{analysis.stats.totalLines.toLocaleString()}</div>
+                    <div className="text-xs text-gray-500">Lines</div>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3 text-center">
+                    <div className="text-lg font-bold text-gray-900">{Object.keys(analysis.stats.languages).length}</div>
+                    <div className="text-xs text-gray-500">Languages</div>
+                  </div>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {Object.entries(analysis.stats.languages).sort((a,b) => b[1]-a[1]).slice(0,5).map(([lang, lines]) => (
+                    <span key={lang} className="text-xs text-gray-500 bg-gray-100 rounded px-2 py-0.5">{lang}: {lines.toLocaleString()}</span>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Services */}
+            <div>
+              <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Services Detected</p>
+              {analysis.services.filter(s => s.found).length === 0 ? (
+                <p className="text-xs text-gray-400">No known services detected</p>
+              ) : (
+                <div className="flex flex-wrap gap-3">
+                  {analysis.services.filter(s => s.found).map((svc, i) => (
+                    <div key={i} className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                      <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
+                      <div>
+                        <div className="text-xs font-medium text-gray-800">{svc.name}</div>
+                        {svc.sources.length > 0 && (
+                          <div className="text-xs text-gray-400 truncate max-w-[140px]" title={svc.sources.join(', ')}>{svc.sources[0]}</div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Endpoints */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase mb-3">
+                  Open Endpoints <span className="text-gray-400 font-normal">({analysis.openEndpoints.length})</span>
+                </p>
+                <div className="border border-gray-200 rounded-lg overflow-hidden max-h-48 overflow-y-auto">
+                  {analysis.openEndpoints.length === 0 ? (
+                    <div className="p-4 text-xs text-gray-400">None detected</div>
+                  ) : analysis.openEndpoints.map((ep, i) => (
+                    <div key={i} className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                      <span className={`text-xs font-mono font-semibold px-1.5 py-0.5 rounded ${
+                        ep.method === 'GET' ? 'bg-green-100 text-green-700' :
+                        ep.method === 'POST' ? 'bg-blue-100 text-blue-700' :
+                        'bg-gray-100 text-gray-700'
+                      }`}>{ep.method}</span>
+                      <span className="text-xs font-mono text-gray-700 flex-1 truncate">{ep.path}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase mb-3">
+                  Protected Endpoints <span className="text-gray-400 font-normal">({analysis.protectedEndpoints.length})</span>
+                </p>
+                <div className="border border-gray-200 rounded-lg overflow-hidden max-h-48 overflow-y-auto">
+                  {analysis.protectedEndpoints.length === 0 ? (
+                    <div className="p-4 text-xs text-gray-400">None detected</div>
+                  ) : analysis.protectedEndpoints.map((ep, i) => (
+                    <div key={i} className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                      <span className={`text-xs font-mono font-semibold px-1.5 py-0.5 rounded ${
+                        ep.method === 'GET' ? 'bg-green-100 text-green-700' :
+                        ep.method === 'POST' ? 'bg-blue-100 text-blue-700' :
+                        ep.method === 'DELETE' ? 'bg-red-100 text-red-700' :
+                        'bg-gray-100 text-gray-700'
+                      }`}>{ep.method}</span>
+                      <span className="text-xs font-mono text-gray-700 flex-1 truncate">{ep.path}</span>
+                      <span className="text-xs text-yellow-600">🔒</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Code Quality + Security */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs font-semibold text-gray-500 uppercase">Code Quality</p>
+                  <div className="flex items-center gap-2">
+                    <div className="w-24 h-2 bg-gray-200 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full ${analysis.codeQuality.score >= 80 ? 'bg-green-500' : analysis.codeQuality.score >= 60 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                        style={{ width: `${analysis.codeQuality.score}%` }} />
+                    </div>
+                    <span className={`text-sm font-bold ${analysis.codeQuality.score >= 80 ? 'text-green-600' : analysis.codeQuality.score >= 60 ? 'text-yellow-600' : 'text-red-600'}`}>
+                      {analysis.codeQuality.score}/100
+                    </span>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {analysis.codeQuality.issues.map((issue, i) => (
+                    <div key={i} className={`flex items-start gap-2 text-xs p-2 rounded-lg ${
+                      issue.severity === 'error' ? 'bg-red-50 text-red-700' :
+                      issue.severity === 'warning' ? 'bg-yellow-50 text-yellow-700' :
+                      'bg-gray-50 text-gray-600'
+                    }`}>
+                      <span>{issue.severity === 'error' ? '✗' : issue.severity === 'warning' ? '⚠' : '✓'}</span>
+                      <span>{issue.message}{issue.file ? ` (${issue.file})` : ''}</span>
+                    </div>
+                  ))}
+                  {analysis.codeQuality.positives.map((p, i) => (
+                    <div key={`pos-${i}`} className="flex items-start gap-2 text-xs p-2 rounded-lg bg-green-50 text-green-700">
+                      <span>✓</span><span>{p}</span>
+                    </div>
+                  ))}
+                  {analysis.duplicateEndpoints.length > 0 && (
+                    <div className="flex items-start gap-2 text-xs p-2 rounded-lg bg-red-50 text-red-700">
+                      <span>✗</span>
+                      <span>Duplicate endpoints: {analysis.duplicateEndpoints.map(d => `${d.method} ${d.path} (×${d.count})`).join(', ')}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Security</p>
+                <div className="space-y-2">
+                  {analysis.security.issues.map((issue, i) => (
+                    <div key={i} className={`flex items-start gap-2 text-xs p-2 rounded-lg ${
+                      issue.severity === 'error' ? 'bg-red-50 text-red-700' :
+                      issue.severity === 'warning' ? 'bg-yellow-50 text-yellow-700' :
+                      'bg-green-50 text-green-700'
+                    }`}>
+                      <span>{issue.severity === 'error' ? '✗' : issue.severity === 'warning' ? '⚠' : '✓'}</span>
+                      <span>{issue.message}{issue.file ? ` (${issue.file})` : ''}</span>
+                    </div>
+                  ))}
+                </div>
+                {analysis.envFiles.length > 0 && (
+                  <div className="mt-3 p-2 bg-green-50 rounded-lg text-xs text-green-700">
+                    ✓ .env files found: {analysis.envFiles.map(f => f.split('/').pop()).join(', ')}
+                  </div>
+                )}
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        {!analysis && !analyzing && (
+          <div className="px-6 py-10 text-center text-gray-400">
+            <svg className="w-10 h-10 mx-auto mb-3 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <p className="text-sm">Upload a ZIP of your project to get a full analysis report</p>
+            <p className="text-xs mt-1">All analysis runs locally in your browser — no data is uploaded anywhere</p>
+          </div>
+        )}
+      </div>
+
     </div>
   )
 }
