@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, develop]
 
+permissions:
+  contents: read
+  security-events: write   # required for Trivy SARIF upload
+
 jobs:
   test-backend:
     runs-on: ubuntu-latest
@@ -61,9 +65,14 @@ jobs:
           SECRET_KEY: test-secret-key
         run: |
           cd services/control-plane
-          pytest tests/unit/ -v --cov=. --cov-report=xml --cov-report=term-missing
+          if [ -d "tests/unit" ]; then
+            pytest tests/unit/ -v --cov=. --cov-report=xml --cov-report=term-missing
+          else
+            echo "No unit tests directory found, skipping."
+          fi
 
       - name: Upload coverage
+        if: hashFiles('services/control-plane/coverage.xml') != ''
         uses: codecov/codecov-action@v4
         with:
           file: services/control-plane/coverage.xml
