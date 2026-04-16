@@ -156,11 +156,12 @@ export async function analyzeZip(file: File): Promise<AnalysisResult> {
       re.lastIndex = 0
       while ((m = re.exec(content)) !== null) {
         const routePath = m[1]
-        const lineStart = content.lastIndexOf('\n', m.index)
-        const lineEnd = content.indexOf('\n', m.index)
+        const idx = m.index ?? 0
+        const lineStart = content.lastIndexOf('\n', idx)
+        const lineEnd = content.indexOf('\n', idx)
         const line = content.slice(lineStart, lineEnd)
         const isProtected = AUTH_PATTERNS.some(p => p.test(line)) ||
-          AUTH_PATTERNS.some(p => p.test(content.slice(m!.index, m!.index + 500)))
+          AUTH_PATTERNS.some(p => p.test(content.slice(idx, idx + 500)))
         const ep = { method: method(m), path: routePath, file: path }
         isProtected ? protectedEndpoints.push(ep) : openEndpoints.push(ep)
       }
