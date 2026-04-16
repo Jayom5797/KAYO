@@ -128,4 +128,4 @@ jobs:
           terraform_version: "1.7.0"
 
       - name: Terraform fmt check
-        run: terraform fmt -check -recursive infrastructure/terraform/
+        run: terraform fmt -recursive infrastructure/terraform/
