@@ -6,7 +6,18 @@ terraform {
 }
 
 variable "name"     { type = string }
-variable "services" { type = list(string); default = ["control-plane","detection-engine","ai-explainer"] }
+variable "services" {
+  type    = list(string)
+  default = [
+    "control-plane",
+    "detection-engine",
+    "telemetry-ingestion",
+    "graph-engine",
+    "ai-explainer",
+    "deployment-orchestrator",
+    "frontend"
+  ]
+}
 variable "tags"     { type = map(string); default = {} }
 
 resource "aws_ecr_repository" "services" {

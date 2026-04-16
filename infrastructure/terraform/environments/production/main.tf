@@ -4,14 +4,13 @@ terraform {
     aws = { source = "hashicorp/aws", version = "~> 5.0" }
   }
 
-  # Uncomment after creating the S3 bucket and DynamoDB table
-  # backend "s3" {
-  #   bucket         = "kayo-terraform-state"
-  #   key            = "production/terraform.tfstate"
-  #   region         = "us-east-1"
-  #   dynamodb_table = "kayo-terraform-locks"
-  #   encrypt        = true
-  # }
+  backend "s3" {
+    bucket         = "kayo-terraform-state"
+    key            = "production/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "kayo-terraform-locks"
+    encrypt        = true
+  }
 }
 
 provider "aws" {

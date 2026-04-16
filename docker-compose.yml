@@ -1,7 +1,8 @@
 version: '3.8'
 
 services:
-  # PostgreSQL - Control Plane Database
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+
   postgres:
     image: postgres:16-alpine
     container_name: kayo-postgres
@@ -19,7 +20,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Redis - Cache and Session Store
   redis:
     image: redis:7.2-alpine
     container_name: kayo-redis
@@ -33,7 +33,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Kafka - Message Streaming
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     container_name: kayo-zookeeper
@@ -54,25 +53,28 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      # Internal: kafka:29092  External: localhost:9092
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_LOG_RETENTION_HOURS: 168
     volumes:
       - kafka_data:/var/lib/kafka/data
     healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
 
-  # ClickHouse - Event Storage
   clickhouse:
     image: clickhouse/clickhouse-server:23.8-alpine
     container_name: kayo-clickhouse
     ports:
       - "8123:8123"
-      - "9000:9000"
+      - "9001:9000"
     environment:
       CLICKHOUSE_DB: kayo_events
       CLICKHOUSE_USER: kayo
@@ -84,8 +86,12 @@ services:
       nofile:
         soft: 262144
         hard: 262144
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
-  # Neo4j - Behavior Graph Database
   neo4j:
     image: neo4j:5.15-enterprise
     container_name: kayo-neo4j
@@ -100,29 +106,165 @@ services:
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
 
-  # Detection Engine - Security Analysis
+  # ── Application Services ────────────────────────────────────────────────────
+
+  control-plane:
+    build:
+      context: ./services/control-plane
+      dockerfile: Dockerfile
+    container_name: kayo-control-plane
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://kayo:kayo_dev_password@postgres:5432/kayo_control_plane
+      REDIS_URL: redis://redis:6379/0
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: kayo_dev_password
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "9000"
+      CLICKHOUSE_DATABASE: kayo_events
+      CLICKHOUSE_USER: kayo
+      CLICKHOUSE_PASSWORD: kayo_dev_password
+      SECRET_KEY: ${SECRET_KEY:-kayo-dev-secret-key-change-in-production}
+      DEBUG: "true"
+      K8S_IN_CLUSTER: "false"
+    command: >
+      sh -c "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  telemetry-ingestion:
+    build:
+      context: ./services/telemetry-ingestion
+      dockerfile: Dockerfile
+    container_name: kayo-telemetry-ingestion
+    depends_on:
+      kafka:
+        condition: service_started
+      clickhouse:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_GROUP_ID: telemetry-ingestion
+      KAFKA_TOPIC_PATTERN: "telemetry\\..*"
+      KAFKA_AUTO_OFFSET_RESET: earliest
+      KAFKA_ENABLE_AUTO_COMMIT: "false"
+      KAFKA_MAX_POLL_RECORDS: "500"
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "9000"
+      CLICKHOUSE_DATABASE: kayo_events
+      CLICKHOUSE_USER: kayo
+      CLICKHOUSE_PASSWORD: kayo_dev_password
+      CLICKHOUSE_BATCH_SIZE: "1000"
+      CLICKHOUSE_BATCH_TIMEOUT: "5"
+      LOG_LEVEL: INFO
+    restart: unless-stopped
+
+  graph-engine:
+    build:
+      context: ./services/graph-engine
+      dockerfile: Dockerfile
+    container_name: kayo-graph-engine
+    depends_on:
+      kafka:
+        condition: service_started
+      neo4j:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_GROUP_ID: graph-engine
+      KAFKA_TOPIC_PATTERN: "telemetry\\..*"
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_ADMIN_USER: neo4j
+      NEO4J_ADMIN_PASSWORD: kayo_dev_password
+      DATABASE_URL: postgresql://kayo:kayo_dev_password@postgres:5432/kayo_control_plane
+      LOG_LEVEL: INFO
+    restart: unless-stopped
+
   detection-engine:
     build:
       context: ./services/detection-engine
       dockerfile: Dockerfile
     container_name: kayo-detection-engine
     depends_on:
-      - postgres
-      - neo4j
-      - kafka
+      kafka:
+        condition: service_started
+      neo4j:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_ADMIN_USER: neo4j
       NEO4J_ADMIN_PASSWORD: kayo_dev_password
       DATABASE_URL: postgresql://kayo:kayo_dev_password@postgres:5432/kayo_control_plane
-      LOOKBACK_WINDOW: 3600
+      LOOKBACK_WINDOW: "3600"
       RULES_DIRECTORY: rules
       LOG_LEVEL: INFO
     volumes:
       - ./services/detection-engine/rules:/app/rules:ro
     command: ["python", "event_driven_detector.py"]
+    restart: unless-stopped
+
+  ai-explainer:
+    build:
+      context: ./services/ai-explainer
+      dockerfile: Dockerfile
+    container_name: kayo-ai-explainer
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://kayo:kayo_dev_password@postgres:5432/kayo_control_plane
+      REDIS_URL: redis://redis:6379/0
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "9000"
+      CLICKHOUSE_DATABASE: kayo_events
+      CLICKHOUSE_USER: kayo
+      CLICKHOUSE_PASSWORD: kayo_dev_password
+      LOG_LEVEL: INFO
+    # ai-explainer is invoked via control-plane, not a standalone loop
+    command: ["python", "-c", "import time; print('AI Explainer ready'); [time.sleep(3600) for _ in iter(int, 1)]"]
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: kayo-frontend
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
     restart: unless-stopped
 
 volumes:
