@@ -5,17 +5,41 @@ terraform {
   }
 }
 
-variable "name"              { type = string }
-variable "vpc_id"            { type = string }
-variable "subnet_ids"        { type = list(string) }
-variable "allowed_sg_ids"    { type = list(string); default = [] }
-variable "db_name"           { type = string; default = "kayo_control_plane" }
-variable "db_username"       { type = string; default = "kayo" }
-variable "db_password"       { type = string; sensitive = true }
-variable "instance_class"    { type = string; default = "db.t3.medium" }
-variable "allocated_storage" { type = number; default = 100 }
-variable "multi_az"          { type = bool; default = true }
-variable "tags"              { type = map(string); default = {} }
+variable "name" { type = string }
+variable "vpc_id" { type = string }
+variable "subnet_ids" { type = list(string) }
+variable "allowed_sg_ids" {
+  type    = list(string)
+  default = []
+}
+variable "db_name" {
+  type    = string
+  default = "kayo_control_plane"
+}
+variable "db_username" {
+  type    = string
+  default = "kayo"
+}
+variable "db_password" {
+  type      = string
+  sensitive = true
+}
+variable "instance_class" {
+  type    = string
+  default = "db.t3.medium"
+}
+variable "allocated_storage" {
+  type    = number
+  default = 100
+}
+variable "multi_az" {
+  type    = bool
+  default = true
+}
+variable "tags" {
+  type    = map(string)
+  default = {}
+}
 
 resource "aws_db_subnet_group" "main" {
   name       = "${var.name}-rds-subnet-group"
@@ -52,15 +76,15 @@ resource "aws_kms_key" "rds" {
 }
 
 resource "aws_db_instance" "main" {
-  identifier              = var.name
-  engine                  = "postgres"
-  engine_version          = "16.1"
-  instance_class          = var.instance_class
-  allocated_storage       = var.allocated_storage
-  max_allocated_storage   = var.allocated_storage * 3
-  storage_type            = "gp3"
-  storage_encrypted       = true
-  kms_key_id              = aws_kms_key.rds.arn
+  identifier            = var.name
+  engine                = "postgres"
+  engine_version        = "16.1"
+  instance_class        = var.instance_class
+  allocated_storage     = var.allocated_storage
+  max_allocated_storage = var.allocated_storage * 3
+  storage_type          = "gp3"
+  storage_encrypted     = true
+  kms_key_id            = aws_kms_key.rds.arn
 
   db_name  = var.db_name
   username = var.db_username
@@ -71,11 +95,11 @@ resource "aws_db_instance" "main" {
   multi_az               = var.multi_az
   publicly_accessible    = false
 
-  backup_retention_period = 7
-  backup_window           = "03:00-04:00"
-  maintenance_window      = "Mon:04:00-Mon:05:00"
-  deletion_protection     = true
-  skip_final_snapshot     = false
+  backup_retention_period   = 7
+  backup_window             = "03:00-04:00"
+  maintenance_window        = "Mon:04:00-Mon:05:00"
+  deletion_protection       = true
+  skip_final_snapshot       = false
   final_snapshot_identifier = "${var.name}-final-snapshot"
 
   performance_insights_enabled = true
