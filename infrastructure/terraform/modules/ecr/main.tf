@@ -15,7 +15,7 @@ variable "tags" {
 }
 
 variable "services" {
-  type    = list(string)
+  type = list(string)
   default = [
     "control-plane",
     "detection-engine",
@@ -26,7 +26,6 @@ variable "services" {
     "frontend"
   ]
 }
-variable "tags"     { type = map(string); default = {} }
 
 resource "aws_ecr_repository" "services" {
   for_each             = toset(var.services)
