@@ -69,7 +69,8 @@ export default function MonitorPage() {
       }
       setResults(prev => ({ ...prev, [url]: entry }))
       setHistory(prev => {
-        const list: HistoryEntry[] = [{ status: entry.status, responseTime: data.response_time_ms, checkedAt: entry.checkedAt }, ...(prev[url] || [])].slice(0, 40)
+        const newEntry: HistoryEntry = { status: entry.status === 'up' ? 'up' : 'down', responseTime: data.response_time_ms, checkedAt: entry.checkedAt }
+        const list: HistoryEntry[] = [newEntry, ...(prev[url] || [])].slice(0, 40)
         return { ...prev, [url]: list }
       })
     } catch (e: any) {
