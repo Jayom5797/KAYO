@@ -5,6 +5,7 @@ import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { useAuthStore } from '@/lib/auth-store'
 import { apiClient } from '@/lib/api-client'
+import { wsClient } from '@/lib/websocket-client'
 
 const NAV = [
   { href: '/dashboard',             label: 'Overview' },
@@ -34,11 +35,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       try {
         const currentUser = await apiClient.getCurrentUser()
         setUser(currentUser)
+        wsClient.connect() // start WS once authenticated
       } catch {
         router.push('/login')
       }
     }
-    if (!isAuthenticated) checkAuth()
+    if (!isAuthenticated) {
+      checkAuth()
+    } else {
+      wsClient.connect() // reconnect if already authenticated (page refresh)
+    }
+    return () => { wsClient.disconnect() }
   }, [isAuthenticated, setUser, router])
 
   const handleLogout = () => {

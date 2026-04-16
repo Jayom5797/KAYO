@@ -72,9 +72,9 @@ ALTER TABLE events ADD INDEX idx_user_id user_id TYPE bloom_filter GRANULARITY 1
 ALTER TABLE events ADD INDEX idx_process_id process_id TYPE bloom_filter GRANULARITY 1;
 ALTER TABLE events ADD INDEX idx_host_id host_id TYPE bloom_filter GRANULARITY 1;
 
--- Token bloom filter for string searches (optimized for text search)
-ALTER TABLE events ADD INDEX idx_process_name process_name TYPE tokenbf_v1(30720, 3, 0) GRANULARITY 1;
-ALTER TABLE events ADD INDEX idx_container_id container_id TYPE tokenbf_v1(30720, 3, 0) GRANULARITY 1;
+-- Bloom filter for string searches (compatible with Nullable(String))
+ALTER TABLE events ADD INDEX idx_process_name process_name TYPE bloom_filter GRANULARITY 1;
+ALTER TABLE events ADD INDEX idx_container_id container_id TYPE bloom_filter GRANULARITY 1;
 
 -- Materialized view for event counts by tenant (pre-aggregated for dashboards)
 -- Time complexity: O(1) for count queries instead of O(n)

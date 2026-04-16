@@ -223,49 +223,79 @@ class ExplanationService:
     
     def _get_attack_path(self, incident_id: str, tenant_id: str) -> Dict[str, Any]:
         """
-        Get attack path from incident or reconstruct if needed.
-        
-        Args:
-            incident_id: Incident UUID
-            tenant_id: Tenant UUID
-        
-        Returns:
-            Attack path dictionary
-        
-        Time complexity: O(1) if cached in incident, O(V+E) if reconstruction needed
+        Get attack path from incident's graph_snapshot.
+        Falls back to empty structure if not available.
         """
-        # In production, this would call the attack path reconstruction service
-        # For now, return empty structure
+        try:
+            import sys, os
+            sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../control-plane')))
+            from models.incident import Incident
+            import uuid
+
+            incident = self.db_session.query(Incident).filter(
+                Incident.incident_id == uuid.UUID(incident_id),
+                Incident.tenant_id == uuid.UUID(tenant_id)
+            ).first()
+
+            if incident and incident.graph_snapshot:
+                snap = incident.graph_snapshot
+                return {
+                    'root_cause': snap.get('root_cause', []),
+                    'attack_chain': snap.get('attack_chain', snap.get('nodes', [])),
+                    'timeline': snap.get('timeline', []),
+                    'confidence_score': snap.get('confidence_score', 0.5),
+                    'affected_entities': snap.get('affected_entities', {
+                        'users': [], 'hosts': [], 'processes': [], 'files': [], 'ip_addresses': []
+                    }),
+                    'mitre_tactics': snap.get('mitre_tactics', []),
+                    'mitre_techniques': snap.get('mitre_techniques', []),
+                }
+        except Exception as e:
+            logger.warning(f"Could not load graph_snapshot: {e}")
+
         return {
             'root_cause': [],
             'attack_chain': [],
             'timeline': [],
             'confidence_score': 0.0,
-            'affected_entities': {
-                'users': [],
-                'hosts': [],
-                'processes': [],
-                'files': [],
-                'ip_addresses': []
-            }
+            'affected_entities': {'users': [], 'hosts': [], 'processes': [], 'files': [], 'ip_addresses': []}
         }
-    
+
     def _get_related_events(self, event_ids: list) -> list:
         """
-        Fetch events from ClickHouse.
-        
-        Args:
-            event_ids: List of event IDs
-        
-        Returns:
-            List of event dictionaries
-        
-        Security: Uses parameterized queries
-        Time complexity: O(n) where n is number of events
+        Fetch events from ClickHouse by event_id list.
+        Returns empty list gracefully if ClickHouse is unavailable.
         """
-        # In production, this would query ClickHouse
-        # For now, return empty list
-        return []
+        if not event_ids:
+            return []
+        try:
+            from clickhouse_driver import Client
+            ch = Client(
+                host=settings.clickhouse_host if hasattr(settings, 'clickhouse_host') else 'localhost',
+                port=int(settings.clickhouse_port) if hasattr(settings, 'clickhouse_port') else 9000,
+                database=settings.clickhouse_database if hasattr(settings, 'clickhouse_database') else 'kayo_events',
+                user=settings.clickhouse_user if hasattr(settings, 'clickhouse_user') else 'kayo',
+                password=settings.clickhouse_password if hasattr(settings, 'clickhouse_password') else 'kayo_dev_password',
+                connect_timeout=3,
+            )
+            ids = [str(e) for e in event_ids[:50]]
+            placeholders = ', '.join([f"'{i}'" for i in ids])
+            rows = ch.execute(
+                f"SELECT event_id, source_type, event_category, event_type, event_action, "
+                f"process_name, host_name, user_name, timestamp "
+                f"FROM events WHERE toString(event_id) IN ({placeholders}) LIMIT 50"
+            )
+            return [
+                {
+                    'event_id': str(r[0]), 'source_type': r[1], 'category': r[2],
+                    'type': r[3], 'action': r[4], 'process': r[5],
+                    'host': r[6], 'user': r[7], 'timestamp': str(r[8])
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.warning(f"ClickHouse event fetch failed (non-fatal): {e}")
+            return []
     
     async def _get_cached_explanation(self, incident_id: str) -> Optional[Dict[str, Any]]:
         """

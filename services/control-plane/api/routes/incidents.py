@@ -129,6 +129,19 @@ async def update_incident(
     else:
         broadcaster.broadcast_incident_updated_sync(tenant_id, incident_id, incident_data, changes)
     
+    # Push real-time WebSocket event
+    try:
+        from main import ws_manager
+        import asyncio
+        loop = asyncio.get_event_loop()
+        loop.create_task(ws_manager.broadcast(
+            str(tenant_id),
+            "incident.updated",
+            {"incident_id": str(incident_id), **incident_data}
+        ))
+    except Exception as e:
+        logger.warning(f"WS broadcast failed: {e}")
+    
     return incident
 
 

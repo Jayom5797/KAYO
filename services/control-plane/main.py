@@ -1,8 +1,10 @@
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
 import time
+import asyncio
+from typing import Dict, Set
 
 from config import settings
 from database import engine, Base, SessionLocal
@@ -17,6 +19,48 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# WebSocket connection manager
+# ---------------------------------------------------------------------------
+class ConnectionManager:
+    """Manages active WebSocket connections per tenant."""
+
+    def __init__(self):
+        # tenant_id -> set of websockets
+        self._connections: Dict[str, Set[WebSocket]] = {}
+
+    async def connect(self, websocket: WebSocket, tenant_id: str):
+        await websocket.accept()
+        self._connections.setdefault(tenant_id, set()).add(websocket)
+        logger.info(f"WS connected: tenant={tenant_id}, total={len(self._connections[tenant_id])}")
+
+    def disconnect(self, websocket: WebSocket, tenant_id: str):
+        conns = self._connections.get(tenant_id, set())
+        conns.discard(websocket)
+        if not conns:
+            self._connections.pop(tenant_id, None)
+
+    async def broadcast(self, tenant_id: str, event_type: str, data: dict):
+        """Send event to all connections for a tenant."""
+        message = {"type": event_type, "data": data}
+        dead = set()
+        for ws in list(self._connections.get(tenant_id, set())):
+            try:
+                await ws.send_json(message)
+            except Exception:
+                dead.add(ws)
+        for ws in dead:
+            self.disconnect(ws, tenant_id)
+
+    async def broadcast_all(self, event_type: str, data: dict):
+        """Broadcast to every connected tenant (admin use)."""
+        for tenant_id in list(self._connections.keys()):
+            await self.broadcast(tenant_id, event_type, data)
+
+
+ws_manager = ConnectionManager()
+
 # Create FastAPI application
 app = FastAPI(
     title=settings.app_name,
@@ -25,7 +69,6 @@ app = FastAPI(
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
-    redirect_slashes=False
 )
 
 # CORS middleware
@@ -183,6 +226,53 @@ app.include_router(invitations_router)
 app.include_router(webhooks_router)
 app.include_router(audit_logs_router)
 app.include_router(compliance_router)
+
+
+# WebSocket endpoint — authenticated via token query param
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket, token: str = None):
+    """
+    Real-time event stream per tenant.
+
+    Connect: ws://localhost:8000/ws?token=<jwt>
+    Events pushed: incident.created, incident.updated, deployment.status_changed
+    """
+    from services.auth import get_current_user
+    from database import SessionLocal as _SessionLocal
+    from jose import JWTError, jwt as _jwt
+    import uuid as _uuid
+
+    # Authenticate via token query param
+    if not token:
+        await websocket.close(code=4001)
+        return
+
+    try:
+        payload = _jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        tenant_id: str = payload.get("tenant_id")
+        if not tenant_id:
+            await websocket.close(code=4001)
+            return
+    except JWTError:
+        await websocket.close(code=4001)
+        return
+
+    await ws_manager.connect(websocket, tenant_id)
+    try:
+        while True:
+            # Keep connection alive; client can send pings
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=30)
+            except asyncio.TimeoutError:
+                # Send heartbeat
+                await websocket.send_json({"type": "ping"})
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        ws_manager.disconnect(websocket, tenant_id)
+        logger.info(f"WS disconnected: tenant={tenant_id}")
 
 
 # Startup event
