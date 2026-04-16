@@ -5,7 +5,15 @@ terraform {
   }
 }
 
-variable "name"     { type = string }
+variable "name" {
+  type = string
+}
+
+variable "tags" {
+  type    = map(string)
+  default = {}
+}
+
 variable "services" {
   type    = list(string)
   default = [
