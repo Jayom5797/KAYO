@@ -176,6 +176,48 @@ class ApiClient {
     await this.client.delete(`/api/webhooks/${webhookId}`)
   }
 
+  async updateWebhook(webhookId: string, data: any) {
+    const response = await this.client.patch(`/api/webhooks/${webhookId}`, data)
+    return response.data
+  }
+
+  async getWebhookDeliveries(webhookId: string) {
+    const response = await this.client.get(`/api/webhooks/${webhookId}/deliveries`)
+    return response.data
+  }
+
+  async getAuditLogs(skip = 0, limit = 100, action?: string, resourceType?: string) {
+    const response = await this.client.get('/api/audit-logs', {
+      params: { skip, limit, action, resource_type: resourceType },
+    })
+    return response.data
+  }
+
+  async signup(email: string, password: string) {
+    const response = await this.client.post('/api/auth/signup', { email, password })
+    return response.data
+  }
+
+  async getComplianceReport() {
+    const response = await this.client.get('/api/compliance/report')
+    return response.data
+  }
+
+  async enforceRetention() {
+    const response = await this.client.post('/api/compliance/enforce-retention')
+    return response.data
+  }
+
+  async eraseData() {
+    const response = await this.client.post('/api/compliance/gdpr/erase')
+    return response.data
+  }
+
+  async exportData() {
+    const response = await this.client.post('/api/compliance/gdpr/export')
+    return response.data
+  }
+
   logout(): void {
     this.clearToken()
   }
