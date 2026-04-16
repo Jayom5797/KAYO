@@ -200,7 +200,7 @@ export default function MonitorPage() {
           </button>
         </form>
         <p className="mt-2 text-xs text-gray-400">
-          Checks <span className="font-mono">/health</span> every 30s. Use "Discover Endpoints" to auto-load all API routes from the OpenAPI spec.
+          Checks <span className="font-mono">/health</span> every 30s. Use &quot;Discover Endpoints&quot; to auto-load all API routes from the OpenAPI spec.
         </p>
       </div>
 

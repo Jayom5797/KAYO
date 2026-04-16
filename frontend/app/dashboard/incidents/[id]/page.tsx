@@ -148,7 +148,7 @@ export default function IncidentDetailPage() {
         {incident.ai_summary ? (
           <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{incident.ai_summary}</p>
         ) : (
-          <p className="text-sm text-gray-400 italic">No AI analysis yet. Click "Generate Explanation" to analyze this incident with AI.</p>
+          <p className="text-sm text-gray-400 italic">No AI analysis yet. Click &quot;Generate Explanation&quot; to analyze this incident with AI.</p>
         )}
       </div>
 
