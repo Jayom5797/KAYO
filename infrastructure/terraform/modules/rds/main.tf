@@ -78,7 +78,7 @@ resource "aws_kms_key" "rds" {
 resource "aws_db_instance" "main" {
   identifier            = var.name
   engine                = "postgres"
-  engine_version        = "16.1"
+  engine_version        = "16"
   instance_class        = var.instance_class
   allocated_storage     = var.allocated_storage
   max_allocated_storage = var.allocated_storage * 3

@@ -119,15 +119,6 @@ resource "aws_msk_cluster" "main" {
     }
   }
 
-  logging_info {
-    broker_logs {
-      cloudwatch_logs {
-        enabled   = true
-        log_group = "/aws/msk/${var.name}"
-      }
-    }
-  }
-
   tags = merge(var.tags, { Name = var.name })
 }
 
