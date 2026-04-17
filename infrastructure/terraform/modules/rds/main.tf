@@ -103,7 +103,6 @@ resource "aws_db_instance" "main" {
   final_snapshot_identifier = "${var.name}-final-snapshot"
 
   performance_insights_enabled = true
-  monitoring_interval          = 60
 
   tags = merge(var.tags, { Name = var.name })
 }
